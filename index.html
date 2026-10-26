@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Game Interaktif: Fakta atau Opini (Duel)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Fredoka', sans-serif;
+            background-color: #0f172a;
+            margin: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            overflow: hidden;
+            /* touch-action: none dihapus agar di HP/Papan Interaktif tetap bisa di-scroll */
+        }
+
+        /* 16:9 Container forcing */
+        .board-container {
+            width: 100%;
+            max-width: 1400px;
+            aspect-ratio: 16 / 9;
+            background: radial-gradient(circle at top, #1e293b, #0f172a);
+            position: relative;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
+            display: flex;
+            flex-direction: column;
+            border: 8px solid #334155;
+            border-radius: 24px;
+            overflow: hidden;
+        }
+
+        @media (max-aspect-ratio: 16/9) {
+            .board-container { width: 98vw; height: auto; border-width: 4px; }
+        }
+        @media (min-aspect-ratio: 16/9) {
+            .board-container { height: 95vh; width: auto; }
+        }
+
+        /* Card Styles */
+        .card {
+            background-color: #fef08a;
+            color: #713f12;
+            border-bottom: 4px solid #eab308;
+            border-right: 4px solid #eab308;
+            cursor: grab;
+            transition: transform 0.2s, box-shadow 0.2s, filter 0.2s;
+            user-select: none;
+        }
+        .card:active { cursor: grabbing; transform: scale(0.95); }
+        .card.dragging { opacity: 0.5; transform: scale(1.05); }
+        .card.selected {
+            outline: 4px solid #facc15;
+            animation: pulse-border-yellow 1.5s infinite;
+            transform: scale(1.05) translateY(-10px);
+            z-index: 20;
+            box-shadow: 0 10px 25px -5px rgba(250, 204, 21, 0.5);
+        }
+
+        /* Drop Zones */
+        .drop-zone { transition: all 0.3s ease; }
+        .drop-zone.drag-over { background-color: rgba(255, 255, 255, 0.15); transform: scale(1.02); }
+        
+        .zone-content {
+            display: flex;
+            flex-direction: column;
+            gap: 0.4rem;
+            overflow-y: auto;
+            max-height: 100%;
+            padding-right: 0.5rem;
+        }
+        .zone-content::-webkit-scrollbar { width: 5px; }
+        .zone-content::-webkit-scrollbar-track { background: transparent; }
+        .zone-content::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 10px; }
+
+        /* Animations */
+        @keyframes pulse-border-yellow {
+            0% { outline-color: #facc15; box-shadow: 0 0 0 0 rgba(250, 204, 21, 0.7); }
+            70% { outline-color: #fef08a; box-shadow: 0 0 0 10px rgba(250, 204, 21, 0); }
+            100% { outline-color: #facc15; box-shadow: 0 0 0 0 rgba(250, 204, 21, 0); }
+        }
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            20%, 60% { transform: translateX(-8px); }
+            40%, 80% { transform: translateX(8px); }
+        }
+        .shake-animation { animation: shake 0.4s cubic-bezier(.36,.07,.19,.97) both; }
+        
+        @keyframes popIn {
+            0% { transform: scale(0); opacity: 0; }
+            80% { transform: scale(1.1); opacity: 1; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+        .pop-in { animation: popIn 0.3s ease-out forwards; }
+        
+        @keyframes floatUp {
+            0% { opacity: 1; transform: translateY(0) scale(1); }
+            100% { opacity: 0; transform: translateY(-50px) scale(1.5); }
+        }
+        .floating-score {
+            position: absolute;
+            font-weight: bold;
+            font-size: 1.5rem;
+            pointer-events: none;
+            animation: floatUp 1s ease-out forwards;
+            z-index: 50;
+        }
+
+        /* Card Pool Scrollbar */
+        .card-pool::-webkit-scrollbar { height: 8px; }
+        .card-pool::-webkit-scrollbar-track { background: rgba(0,0,0,0.3); border-radius: 4px; }
+        .card-pool::-webkit-scrollbar-thumb { background: #64748b; border-radius: 4px; }
+    </style>
+</head>
+<body>
+
+    <div class="board-container relative">
+        <!-- Header -->
+        <header class="flex justify-between items-center p-3 md:p-4 bg-slate-800/90 border-b border-slate-700 z-10">
+            <div>
+                <h1 class="text-xl md:text-2xl font-bold text-white tracking-wide">Tantangan Bonus: Adu Cepat</h1>
+                <p class="text-slate-300 text-xs md:text-sm">Rebut kartu dari bawah, masukkan ke zona tim kamu (Skor: Benar +100, Salah -50)</p>
+            </div>
+            <button onclick="initGame()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg shadow-lg font-semibold transition-all">
+                🔄 Mulai Ulang
+            </button>
+        </header>
+
+        <!-- Main Game Board (Split Screen) -->
+        <main class="flex-1 flex gap-2 md:gap-4 p-2 md:p-4 overflow-hidden relative">
+            
+            <!-- TEAM A (RED) -->
+            <div class="flex-1 flex flex-col bg-red-950/30 border-2 border-red-900/50 rounded-2xl p-2 md:p-3 relative overflow-hidden group transition-all" id="board-A">
+                <!-- Scoreboard A -->
+                <div class="flex justify-between items-center bg-red-900/60 rounded-xl p-2 md:p-3 mb-2 shadow-inner border border-red-700">
+                    <h2 class="text-lg md:text-2xl font-bold text-red-400 drop-shadow-md">🔴 TIM MERAH</h2>
+                    <div class="flex gap-4 items-center">
+                        <div class="text-white font-bold bg-black/30 px-3 py-1 rounded-lg">Skor: <span id="score-A" class="text-red-300 text-xl">0</span></div>
+                        <div id="lives-A" class="flex gap-1 text-red-500 text-lg">❤️❤️❤️</div>
+                    </div>
+                </div>
+
+                <!-- Drop Zones A -->
+                <div class="flex-1 flex gap-2">
+                    <div class="drop-zone flex-1 border-2 border-dashed border-red-400/40 bg-red-900/20 rounded-xl p-2 flex flex-col relative" data-team="A" data-type="fakta">
+                        <h3 class="text-sm md:text-base font-bold text-red-200 mb-2 text-center bg-red-900/50 py-1 rounded-lg">FAKTA</h3>
+                        <div class="zone-content flex-1 z-10" id="content-A-fakta"></div>
+                    </div>
+                    <div class="drop-zone flex-1 border-2 border-dashed border-orange-400/40 bg-orange-900/20 rounded-xl p-2 flex flex-col relative" data-team="A" data-type="opini">
+                        <h3 class="text-sm md:text-base font-bold text-orange-200 mb-2 text-center bg-orange-900/50 py-1 rounded-lg">OPINI</h3>
+                        <div class="zone-content flex-1 z-10" id="content-A-opini"></div>
+                    </div>
+                </div>
+                <!-- Overlay if dead -->
+                <div id="overlay-A" class="absolute inset-0 bg-black/60 backdrop-blur-sm z-20 hidden flex-col items-center justify-center">
+                    <span class="text-6xl mb-2">💀</span>
+                    <span class="text-red-500 font-bold text-2xl">Tim Merah Gugur</span>
+                </div>
+            </div>
+
+            <!-- VS Badge -->
+            <div class="absolute left-1/2 top-1/2 transform -translate-x-1/2 -translate-y-1/2 z-10 pointer-events-none drop-shadow-2xl">
+                <div class="bg-gradient-to-br from-yellow-400 to-yellow-600 w-12 h-12 md:w-16 md:h-16 rounded-full flex items-center justify-center border-4 border-slate-800 text-white font-black text-xl md:text-2xl shadow-lg">VS</div>
+            </div>
+
+            <!-- TEAM B (BLUE) -->
+            <div class="flex-1 flex flex-col bg-blue-950/30 border-2 border-blue-900/50 rounded-2xl p-2 md:p-3 relative overflow-hidden transition-all" id="board-B">
+                <!-- Scoreboard B -->
+                <div class="flex justify-between items-center bg-blue-900/60 rounded-xl p-2 md:p-3 mb-2 shadow-inner border border-blue-700">
+                    <h2 class="text-lg md:text-2xl font-bold text-blue-400 drop-shadow-md">🔵 TIM BIRU</h2>
+                    <div class="flex gap-4 items-center">
+                        <div class="text-white font-bold bg-black/30 px-3 py-1 rounded-lg">Skor: <span id="score-B" class="text-blue-300 text-xl">0</span></div>
+                        <div id="lives-B" class="flex gap-1 text-red-500 text-lg">❤️❤️❤️</div>
+                    </div>
+                </div>
+
+                <!-- Drop Zones B -->
+                <div class="flex-1 flex gap-2">
+                    <div class="drop-zone flex-1 border-2 border-dashed border-blue-400/40 bg-blue-900/20 rounded-xl p-2 flex flex-col relative" data-team="B" data-type="fakta">
+                        <h3 class="text-sm md:text-base font-bold text-blue-200 mb-2 text-center bg-blue-900/50 py-1 rounded-lg">FAKTA</h3>
+                        <div class="zone-content flex-1 z-10" id="content-B-fakta"></div>
+                    </div>
+                    <div class="drop-zone flex-1 border-2 border-dashed border-cyan-400/40 bg-cyan-900/20 rounded-xl p-2 flex flex-col relative" data-team="B" data-type="opini">
+                        <h3 class="text-sm md:text-base font-bold text-cyan-200 mb-2 text-center bg-cyan-900/50 py-1 rounded-lg">OPINI</h3>
+                        <div class="zone-content flex-1 z-10" id="content-B-opini"></div>
+                    </div>
+                </div>
+                 <!-- Overlay if dead -->
+                 <div id="overlay-B" class="absolute inset-0 bg-black/60 backdrop-blur-sm z-20 hidden flex-col items-center justify-center">
+                    <span class="text-6xl mb-2">💀</span>
+                    <span class="text-blue-500 font-bold text-2xl">Tim Biru Gugur</span>
+                </div>
+            </div>
+        </main>
+
+        <!-- Shared Card Pool (Bottom Area) -->
+        <footer class="h-32 md:h-36 bg-slate-900/90 border-t-4 border-yellow-500/50 p-3 flex flex-col justify-center relative">
+            <div class="absolute -top-3 left-1/2 transform -translate-x-1/2 bg-yellow-500 text-yellow-950 px-4 py-0.5 rounded-full text-xs font-bold shadow-lg whitespace-nowrap text-center">
+                KOLAM KARTU (Tarik, atau Klik Kartu ➡️ Klik Kotak)
+            </div>
+            <div id="card-pool" class="card-pool w-full h-full flex gap-3 overflow-x-auto items-center pb-2 px-2 pt-2 snap-x">
+                <!-- Cards injected via JS -->
+            </div>
+        </footer>
+
+        <!-- Modal Overlay -->
+        <div id="modal" class="absolute inset-0 bg-slate-900/95 z-50 flex items-center justify-center hidden backdrop-blur-md">
+            <div id="modal-content" class="bg-slate-800 border-2 border-slate-600 rounded-3xl p-8 max-w-lg w-full text-center shadow-2xl transform scale-90 transition-transform duration-300">
+                <div id="modal-icon" class="text-7xl mb-4">🏆</div>
+                <h2 id="modal-title" class="text-4xl font-bold text-white mb-2">Permainan Selesai!</h2>
+                
+                <div class="flex justify-center gap-6 my-6">
+                    <div class="bg-red-900/50 border border-red-500 p-4 rounded-xl w-32">
+                        <div class="text-red-400 font-bold text-sm">MERAH</div>
+                        <div id="final-score-A" class="text-3xl font-black text-white mt-1">0</div>
+                    </div>
+                    <div class="bg-blue-900/50 border border-blue-500 p-4 rounded-xl w-32">
+                        <div class="text-blue-400 font-bold text-sm">BIRU</div>
+                        <div id="final-score-B" class="text-3xl font-black text-white mt-1">0</div>
+                    </div>
+                </div>
+
+                <p id="modal-message" class="text-slate-300 mb-8 text-xl font-medium">Tim Merah Menang!</p>
+                <button onclick="initGame()" class="bg-gradient-to-r from-yellow-500 to-orange-600 hover:from-yellow-400 hover:to-orange-500 text-yellow-950 font-bold py-3 px-10 rounded-xl shadow-lg transform hover:scale-105 transition-all text-xl">
+                    Duel Ulang
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Data Game: 10 Soal (5 Fakta, 5 Opini)
+        const masterCards = [
+            { id: 'c1', text: 'Musim kemarau berlangsung sejak awal Juli sampai Agustus.', type: 'fakta' },
+            { id: 'c2', text: 'Kekeringan melanda 15 desa di wilayah Jawa Barat.', type: 'fakta' },
+            { id: 'c3', text: 'Pemerintah menyalurkan 5.000 liter air bersih menggunakan mobil tangki.', type: 'fakta' },
+            { id: 'c4', text: 'Curah hujan tercatat di bawah 50 mm per bulan selama 3 bulan.', type: 'fakta' },
+            { id: 'c5', text: 'BMKG mencatat suhu udara mencapai 35 derajat Celcius siang ini.', type: 'fakta' },
+            { id: 'c6', text: 'Musim kemarau tahun ini terasa sangat menyengsarakan masyarakat.', type: 'opini' },
+            { id: 'c7', text: 'Bantuan pemerintah merupakan solusi terbaik saat ini.', type: 'opini' },
+            { id: 'c8', text: 'Seharusnya warga lebih berhemat air sejak bulan lalu.', type: 'opini' },
+            { id: 'c9', text: 'Kekeringan ini adalah bencana paling parah yang pernah terjadi.', type: 'opini' },
+            { id: 'c10', text: 'Penyaluran air dengan tangki dirasa kurang efektif untuk jangka panjang.', type: 'opini' }
+        ];
+
+        let state = {
+            A: { score: 0, lives: 3, isDead: false },
+            B: { score: 0, lives: 3, isDead: false },
+            cardsLeft: 10
+        };
+
+        let selectedCard = null;
+
+        const cardPool = document.getElementById('card-pool');
+        const modal = document.getElementById('modal');
+        const modalContent = document.getElementById('modal-content');
+        
+        // Initialize Game
+        function initGame() {
+            // Reset State
+            state = {
+                A: { score: 0, lives: 3, isDead: false },
+                B: { score: 0, lives: 3, isDead: false },
+                cardsLeft: masterCards.length
+            };
+            selectedCard = null;
+            
+            updateUI();
+            hideModal();
+            document.getElementById('overlay-A').classList.add('hidden');
+            document.getElementById('overlay-B').classList.add('hidden');
+
+            // Clear all zones
+            ['A','B'].forEach(team => {
+                document.getElementById(`content-${team}-fakta`).innerHTML = '';
+                document.getElementById(`content-${team}-opini`).innerHTML = '';
+            });
+            cardPool.innerHTML = '';
+
+            // Shuffle and render cards
+            const shuffled = [...masterCards].sort(() => Math.random() - 0.5);
+            
+            shuffled.forEach((cardData, index) => {
+                const card = document.createElement('div');
+                // Added snap-center for better scrolling on mobile
+                card.className = 'card flex-shrink-0 w-52 md:w-64 p-2 md:p-3 rounded-xl text-xs md:text-sm font-medium flex items-center shadow-lg snap-center';
+                card.draggable = true;
+                card.dataset.id = cardData.id;
+                card.dataset.type = cardData.type;
+                
+                card.innerHTML = `<div class="bg-yellow-100 rounded text-lg p-1 mr-2 leading-none shadow-sm">📰</div> <span class="leading-snug text-left">${cardData.text}</span>`;
+                
+                // Mouse Drag Events
+                card.addEventListener('dragstart', handleDragStart);
+                card.addEventListener('dragend', handleDragEnd);
+
+                // Touch/Click Event
+                card.addEventListener('click', handleCardClick);
+
+                cardPool.appendChild(card);
+            });
+
+            // Setup Drop Zones
+            document.querySelectorAll('.drop-zone').forEach(zone => {
+                const newZone = zone.cloneNode(true);
+                zone.parentNode.replaceChild(newZone, zone);
+                
+                newZone.addEventListener('dragover', handleDragOver);
+                newZone.addEventListener('dragleave', handleDragLeave);
+                newZone.addEventListener('drop', handleDrop);
+                newZone.addEventListener('click', handleZoneClick);
+            });
+        }
+
+        // --- Drag and Drop Handlers ---
+        function handleDragStart(e) {
+            e.dataTransfer.setData('text/plain', this.dataset.id);
+            this.classList.add('opacity-50');
+            clearSelection();
+        }
+        function handleDragEnd(e) { this.classList.remove('opacity-50'); }
+        function handleDragOver(e) { e.preventDefault(); this.classList.add('drag-over'); }
+        function handleDragLeave(e) { this.classList.remove('drag-over'); }
+
+        function handleDrop(e) {
+            e.preventDefault();
+            this.classList.remove('drag-over');
+            
+            const cardId = e.dataTransfer.getData('text/plain');
+            const card = document.querySelector(`[data-id="${cardId}"]`);
+            
+            if (card) processMove(card, this);
+        }
+
+        // --- Click Handlers (Touch Support) ---
+        function handleCardClick(e) {
+            if (this.parentElement !== cardPool) return;
+            if (selectedCard === this) {
+                clearSelection();
+            } else {
+                clearSelection();
+                selectedCard = this;
+                this.classList.add('selected');
+            }
+        }
+
+        function handleZoneClick(e) {
+            if (!selectedCard) return; 
+            processMove(selectedCard, this);
+            clearSelection();
+        }
+
+        function clearSelection() {
+            if (selectedCard) {
+                selectedCard.classList.remove('selected');
+                selectedCard = null;
+            }
+        }
+
+        // --- Core Game Logic ---
+        function processMove(card, zone) {
+            const team = zone.dataset.team; // 'A' or 'B'
+            const expectedType = zone.dataset.type; // 'fakta' or 'opini'
+            const actualType = card.dataset.type;
+            const targetContainer = zone.querySelector('.zone-content');
+
+            // Prevent interaction if team is dead
+            if (state[team].isDead) return;
+
+            // Positioning for floating score relative to the zone
+            const rect = zone.getBoundingClientRect();
+            
+            if (expectedType === actualType) {
+                // CORRECT
+                state[team].score += 100;
+                showFloatingScore('+100', rect.left + rect.width/2, rect.top + rect.height/2, '#4ade80');
+                
+                card.draggable = false;
+                card.removeEventListener('click', handleCardClick);
+                
+                // Re-style card for dropped state
+                card.className = 'w-full p-2 rounded-lg text-xs md:text-sm font-medium flex items-start shadow-sm mb-1 pop-in border';
+                card.innerHTML = `<span class="mr-2 mt-0.5">✅</span><span class="leading-tight">${card.innerText.replace('📰', '').trim()}</span>`;
+                
+                // Color based on team and type
+                if(team === 'A') {
+                    card.classList.add('bg-red-900/50', 'text-red-100', 'border-red-500/50');
+                } else {
+                    card.classList.add('bg-blue-900/50', 'text-blue-100', 'border-blue-500/50');
+                }
+
+                targetContainer.appendChild(card);
+                zone.style.backgroundColor = 'rgba(74, 222, 128, 0.3)'; // flash green
+                setTimeout(() => zone.style.backgroundColor = '', 300);
+
+                state.cardsLeft--;
+                
+            } else {
+                // WRONG
+                state[team].score -= 50;
+                state[team].lives--;
+                showFloatingScore('-50', rect.left + rect.width/2, rect.top + rect.height/2, '#f87171');
+                
+                zone.style.backgroundColor = 'rgba(239, 68, 68, 0.4)'; // flash red
+                zone.classList.add('shake-animation');
+                
+                const originalBg = card.style.backgroundColor;
+                card.style.backgroundColor = '#fca5a5';
+                
+                setTimeout(() => {
+                    zone.style.backgroundColor = '';
+                    zone.classList.remove('shake-animation');
+                    card.style.backgroundColor = originalBg;
+                }, 400);
+
+                if (state[team].lives <= 0) {
+                    state[team].isDead = true;
+                    document.getElementById(`overlay-${team}`).classList.remove('hidden');
+                    document.getElementById(`overlay-${team}`).classList.add('flex');
+                }
+            }
+
+            updateUI();
+            checkGameOver();
+        }
+
+        function showFloatingScore(text, x, y, color) {
+            const el = document.createElement('div');
+            el.className = 'floating-score';
+            el.innerText = text;
+            el.style.left = `${x}px`;
+            el.style.top = `${y}px`;
+            el.style.color = color;
+            document.body.appendChild(el);
+            setTimeout(() => el.remove(), 1000);
+        }
+
+        function updateUI() {
+            // Update Scores
+            document.getElementById('score-A').innerText = state.A.score;
+            document.getElementById('score-B').innerText = state.B.score;
+
+            // Update Lives
+            ['A', 'B'].forEach(team => {
+                let hearts = '';
+                for (let i = 0; i < 3; i++) {
+                    if (i < state[team].lives) hearts += '<span class="pop-in inline-block">❤️</span>';
+                    else hearts += '<span class="opacity-20 grayscale inline-block">💔</span>';
+                }
+                document.getElementById(`lives-${team}`).innerHTML = hearts;
+            });
+        }
+
+        function checkGameOver() {
+            if (state.cardsLeft === 0 || (state.A.isDead && state.B.isDead)) {
+                setTimeout(showWinModal, 800);
+            }
+        }
+
+        // --- Modals ---
+        function showWinModal() {
+            document.getElementById('final-score-A').innerText = state.A.score;
+            document.getElementById('final-score-B').innerText = state.B.score;
+
+            let title, message, icon;
+            if (state.A.score > state.B.score) {
+                icon = '🏆'; title = 'Tim Merah Menang!'; message = 'Kerja sama yang luar biasa dari Tim Merah!';
+            } else if (state.B.score > state.A.score) {
+                icon = '🏆'; title = 'Tim Biru Menang!'; message = 'Strategi yang hebat dari Tim Biru!';
+            } else {
+                icon = '🤝'; title = 'Hasil Seri!'; message = 'Kedua tim bermain sama kuatnya!';
+            }
+
+            document.getElementById('modal-icon').innerText = icon;
+            document.getElementById('modal-title').innerText = title;
+            document.getElementById('modal-message').innerText = message;
+            
+            createConfetti();
+            modal.classList.remove('hidden');
+            setTimeout(() => modalContent.classList.remove('scale-90'), 50);
+        }
+
+        function hideModal() {
+            modalContent.classList.add('scale-90');
+            setTimeout(() => {
+                modal.classList.add('hidden');
+                document.querySelectorAll('.confetti').forEach(c => c.remove());
+            }, 300);
+        }
+
+        function createConfetti() {
+            const colors = ['#fde047', '#60a5fa', '#34d399', '#f87171', '#c084fc'];
+            for(let i=0; i<60; i++) {
+                const conf = document.createElement('div');
+                conf.className = 'confetti absolute w-3 h-3 rounded-sm z-50 pointer-events-none';
+                conf.style.backgroundColor = colors[Math.floor(Math.random() * colors.length)];
+                conf.style.left = Math.random() * 100 + 'vw';
+                conf.style.top = '-5vh';
+                
+                const duration = Math.random() * 3 + 2;
+                conf.style.transition = `transform ${duration}s ease-in, top ${duration}s linear`;
+                document.body.appendChild(conf);
+                
+                setTimeout(() => {
+                    conf.style.top = '105vh';
+                    conf.style.transform = `rotate(${Math.random() * 720}deg) translateX(${Math.random() * 100 - 50}px)`;
+                }, 50);
+            }
+        }
+
+        window.onload = initGame;
+    </script>
+</body>
+</html>
